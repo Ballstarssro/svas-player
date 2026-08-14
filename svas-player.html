@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVAS prehrávač</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  #p{position:absolute;inset:0}
+  #p iframe{width:100%;height:100%;border:0}
+  /* jedno ťuknutie na ▶ odblokuje zvuk, keď prehliadač nepustí prehrávanie bez gesta v tejto stránke */
+  #go{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);cursor:pointer;z-index:5}
+  #go span{width:92px;height:92px;border-radius:50%;background:#e11d48;display:flex;align-items:center;justify-content:center;font:44px/1 system-ui;color:#fff;padding-left:8px}
+</style>
+</head>
+<body>
+<div id="p"></div>
+<div id="go"><span>▶</span></div>
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+/* SVAS pomocný prehrávač — NEOBSAHUJE žiadne dáta rozboru (mená, tagy, štatistiky ostávajú
+   v HTML súbore u trénera). Rozbor si túto stránku vloží do seba a posiela jej len ID videa
+   a časy cez postMessage; ID videa cestuje v #fragmente URL, ktorý sa NEPOSIELA na server.
+   PREČO EXISTUJE: YouTube nepustí video vložené do súboru otvoreného z disku na PC (chýba
+   referer, chyba 153) a nedá sa to obísť. Táto stránka má webovú adresu, referer má → hrá. */
+let yt=null, ready=false, parentWin=null, fronta=[];
+function q(){ const h={}; location.hash.slice(1).split('&').forEach(kv=>{ const i=kv.indexOf('='); if(i>0) h[kv.slice(0,i)]=decodeURIComponent(kv.slice(i+1)); }); return h; }
+function send(o){ try{ (parentWin||window.parent).postMessage(Object.assign({svas:1},o),'*'); }catch(_){} }
+function cas(){ try{ return yt.getCurrentTime()||0; }catch(_){ return 0; } }
+function stav(){ try{ return yt.getPlayerState(); }catch(_){ return -1; } }
+function onYouTubeIframeAPIReady(){
+  if(yt) return;              // ochrana proti dvojitému volaniu (poistka nižšie)
+  const h=q();
+  yt=new YT.Player('p',{ videoId:h.v||'',
+    playerVars:{playsinline:1,controls:1,rel:0,modestbranding:1,fs:1,iv_load_policy:3,start:Math.max(0,Math.floor(+h.t||0))},
+    events:{
+      onReady:()=>{ ready=true; send({ev:'ready'}); fronta.forEach(vykonaj); fronta=[]; },
+      onError:(e)=>send({ev:'err',kod:e&&e.data}),
+      onStateChange:(e)=>send({ev:'st',s:e.data,t:cas()}) } });
+}
+setInterval(()=>{ if(ready) send({ev:'st',s:stav(),t:cas()}); },500);
+function skusPlay(){
+  try{ yt.playVideo(); }catch(_){}
+  // bez gesta v TEJTO stránke môže Chrome play odmietnuť — vtedy ukáž ▶ (jedno ťuknutie stačí navždy)
+  setTimeout(()=>{ const s=stav(); if(s!==1&&s!==3) document.getElementById('go').style.display='flex'; },600);
+}
+document.getElementById('go').addEventListener('click',()=>{
+  document.getElementById('go').style.display='none';
+  try{ yt.playVideo(); }catch(_){}
+});
+function vykonaj(d){
+  if(d.cmd==='seek'){ try{ yt.seekTo(Math.max(0,+d.t||0),true); }catch(_){} if(d.play) skusPlay(); }
+  else if(d.cmd==='rel'){ try{ yt.seekTo(Math.max(0,cas()+(+d.d||0)),true); }catch(_){} }
+  else if(d.cmd==='play'){ skusPlay(); }
+  else if(d.cmd==='pause'){ try{ yt.pauseVideo(); }catch(_){} document.getElementById('go').style.display='none'; }
+  else if(d.cmd==='load'){ try{ yt.loadVideoById({videoId:String(d.v||''), startSeconds:Math.max(0,+d.t||0)}); }catch(_){} }
+}
+window.addEventListener('message',ev=>{
+  const d=ev.data||{}; if(!d.svas||!d.cmd) return;
+  parentWin=ev.source;
+  if(!ready){ fronta.push(d); return; }
+  vykonaj(d);
+});
+// SÚBEH: keď je YouTube API v cache, načíta sa SKÔR, než táto stránka definuje
+// onYouTubeIframeAPIReady — a spätne ho už nezavolá. Preto ho voláme aj sami.
+if(window.YT && YT.loaded) onYouTubeIframeAPIReady();
+</script>
+</body>
+</html>
