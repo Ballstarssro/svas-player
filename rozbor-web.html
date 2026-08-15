@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVAS rozbor</title>
+<style>
+  :root{color-scheme:dark;}
+  html,body{margin:0;min-height:100%;background:#14161a;color:#e8eaed;font:16px system-ui,-apple-system,sans-serif;}
+  .box{max-width:380px;margin:18vh auto 0;padding:24px;}
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{color:#9aa2ad;font-size:13.5px;margin:0 0 18px;}
+  input{width:100%;box-sizing:border-box;padding:14px;font-size:18px;border-radius:12px;border:1px solid #333844;
+    background:#1d2026;color:#e8eaed;text-align:center;letter-spacing:2px;}
+  button{width:100%;margin-top:10px;padding:14px;font-size:17px;font-weight:700;border:none;border-radius:12px;
+    background:#3b82f6;color:#fff;cursor:pointer;}
+  .err{color:#ef4444;font-size:14px;min-height:20px;margin-top:10px;text-align:center;}
+  .pozn{color:#6b7280;font-size:12.5px;margin-top:22px;text-align:center;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>⚽ SVAS rozbor</h1>
+  <p class="sub">Rozbor je zamknutý — zadaj heslo, ktoré ti poslal tréner.</p>
+  <input id="heslo" type="password" placeholder="heslo" autocomplete="current-password">
+  <button id="odomkni">Odomknúť rozbor</button>
+  <div class="err" id="chyba"></div>
+  <p class="pozn">Dáta rozboru sú na webe uložené zašifrované — bez hesla ich nikto neprečíta.<br>Vytvorené v SVAS.</p>
+</div>
+<script>
+/* SVAS webový prehliadač rozborov — pre iPhony (WhatsApp na iOS nespúšťa skripty v HTML
+   súboroch, takže rozbor-súbor tam nefunguje; link na túto stránku funguje všade).
+   Stránka NEOBSAHUJE žiadne dáta: zašifrovaný rozbor (AES-GCM, kľúč z hesla cez PBKDF2)
+   si stiahne podľa #f=... a odomkne až heslom od trénera. */
+/* Celé v IIFE — po odomknutí sa do stránky zapíše rozbor, ktorý má vlastné globálne
+   premenné (napr. $) a NESMÚ sa pobiť s našimi (document.write globálne konšty neruší). */
+(function(){
+const $=id=>document.getElementById(id);
+function b64d(s){ const bin=atob(s); const a=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i); return a; }
+function param(){ const m={}; location.hash.slice(1).split('&').forEach(kv=>{const i=kv.indexOf('='); if(i>0)m[kv.slice(0,i)]=decodeURIComponent(kv.slice(i+1));}); return m; }
+const SUBOR=(param().f||'').replace(/[^A-Za-z0-9._\/-]/g,'');
+let BALIK=null;
+async function stiahni(){
+  if(!SUBOR){ $('chyba').textContent='Chybný odkaz — chýba názov rozboru.'; return; }
+  try{
+    const r=await fetch('./'+SUBOR+'?v='+Date.now(),{cache:'no-store'});
+    if(!r.ok) throw 0;
+    BALIK=await r.json();
+  }catch(_){ $('chyba').textContent='Rozbor sa nepodarilo stiahnuť — skús o chvíľu, alebo je odkaz starý.'; }
+}
+async function odomkni(){
+  const heslo=$('heslo').value.trim();
+  if(!heslo){ $('chyba').textContent='Zadaj heslo.'; return; }
+  if(!BALIK){ await stiahni(); if(!BALIK) return; }
+  $('chyba').textContent=''; $('odomkni').textContent='Odomykám…';
+  try{
+    const enc=new TextEncoder();
+    const km=await crypto.subtle.importKey('raw',enc.encode(heslo),'PBKDF2',false,['deriveKey']);
+    const key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b64d(BALIK.salt),iterations:200000,hash:'SHA-256'},
+      km,{name:'AES-GCM',length:256},false,['decrypt']);
+    const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(BALIK.iv)},key,b64d(BALIK.data));
+    const html=new TextDecoder().decode(plain);
+    try{ localStorage.setItem('svas_heslo_'+SUBOR, heslo); }catch(_){}
+    document.open(); document.write(html); document.close();
+  }catch(_){
+    $('odomkni').textContent='Odomknúť rozbor';
+    $('chyba').textContent='Nesprávne heslo — skús znova.';
+  }
+}
+$('odomkni').addEventListener('click', odomkni);
+$('heslo').addEventListener('keydown', e=>{ if(e.key==='Enter') odomkni(); });
+stiahni().then(()=>{
+  // heslo môže prísť rovno v linku (#...&k=...) — mriežková časť adresy sa NEPOSIELA na
+  // server, vidí ju len držiteľ linku. Tréner tak klikne a rozbor sa odomkne sám.
+  const k=param().k;
+  if(k){ $('heslo').value=k; odomkni(); return; }
+  // inak: heslo si stránka pamätá — tréner ho zadáva len prvý raz
+  let z=null; try{ z=localStorage.getItem('svas_heslo_'+SUBOR); }catch(_){}
+  if(z){ $('heslo').value=z; odomkni(); }
+});
+})();
+</script>
+</body>
+</html>
